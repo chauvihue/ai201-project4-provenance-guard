@@ -35,17 +35,16 @@ def submit():
 
     classification_result = classify(text)
 
-    # TODO (M4): replace the stubbed stylometric signal inside classify() with the real one
     # TODO (M5): render_label(), persist to submissions.db, wire up appeals
 
     result = {
         "content_id": str(uuid.uuid4()),
         "creator_id": creator_id,
         "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "label": classification_result["label"],
         "confidence": classification_result["confidence"],
-        "note": None,
-        "attribution": classification_result["attribution"],
-        "signals": classification_result["signals"],
+        "note": classification_result["note"],
+        "attribution": classification_result["signals"],
         "status": "classified",
     }
     log_entry(result)
