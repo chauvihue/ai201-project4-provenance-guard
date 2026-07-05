@@ -145,14 +145,14 @@ Note also the blind spot called out under `uncertain` above: the signals classif
 
 ### Appeals workflow
 
-**Who can appeal:** the original submitter (identified by the `author` field on the submission — for this project's scope there's no auth layer). One appeal per submission; a second attempt gets a `409`.
+**Who can appeal:** the original submitter (identified by the `creator_id` field on the submission — for this project's scope there's no auth layer). One appeal per submission; a second attempt gets a `409`.
 
 **What they provide:** free-text `reasoning` explaining why they believe the label is wrong — e.g. describing their actual writing process, or context the classifier couldn't see (drafting history, native-language influence on phrasing, deliberate stylistic choices).
 
 **What the system does on receipt:**
 
 1. Validates the submission exists and hasn't already been appealed.
-2. Appends `{submission_id, reasoning, filed_at}` to `appeals.jsonl` — the original score, signals, and label are never modified or recomputed.
+2. Appends `{content_id, reasoning, filed_at}` to `appeals.jsonl` — the original score, signals, and label are never modified or recomputed.
 3. Updates `status` from `final` to `under_review` on the matching row in `submissions.db`.
 4. Returns the new status and the appeal record to the caller as confirmation.
 
@@ -160,7 +160,7 @@ No automatic re-classification happens; a status of `under_review` is a signal f
 
 **What a human reviewer sees in the appeal queue:** hitting `GET /log?status=under_review` returns, newest first, every submission currently under appeal with the full record needed to make a call without re-reading the raw text blind:
 
-- the original text, author, and submission timestamp
+- the original text, creator_id, and submission timestamp
 - both signal scores and their explanations (LLM reasoning + stylometric feature breakdown)
 - the combined confidence score and the label/NOTE that was shown to the creator
 - the creator's appeal reasoning and when it was filed
@@ -193,8 +193,8 @@ Request:
 
 ```json
 {
-  "content": "the text to analyze",
-  "author": "optional, defaults to \"anonymous\""
+  "text": "the text to analyze",
+  "creator_id": "optional, defaults to \"anonymous\""
 }
 ```
 
@@ -202,12 +202,13 @@ Response `201`:
 
 ```json
 {
-  "submission_id": "uuid",
+  "content_id": "uuid",
+  "creator_id": "the submitter's id, or \"anonymous\"",
   "submitted_at": "ISO-8601 timestamp",
   "label": "highly-human | highly-AI | uncertain",
   "confidence": 0.0,
   "note": "string, present only for boundary cases (70-85% / 20-30%), otherwise null",
-  "signals": {
+  "attribution": {
     "llm": { "score": 0.0, "reasoning": "short explanation from the LLM's reasoning step" },
     "stylometric": { "score": 0.0, "explanation": "which features drove the score" }
   },
@@ -215,9 +216,9 @@ Response `201`:
 }
 ```
 
-Errors: `400` if `content` is missing/empty or exceeds a max length; `429` if the rate limit is exceeded.
+Errors: `400` if `text` is missing/empty or exceeds a max length; `429` if the rate limit is exceeded.
 
-#### `GET /submissions/<submission_id>`
+#### `GET /submissions/<content_id>`
 
 Fetches one stored record from `submissions.db`, including its current `status` and any appeal already filed. Used by the UI to re-render a result page, and by a creator before deciding whether to appeal.
 
@@ -225,7 +226,7 @@ Response `200`: same shape as the `POST /submit` response, plus an `appeal` fiel
 
 Errors: `404` if the id doesn't exist.
 
-#### `POST /submissions/<submission_id>/appeal`
+#### `POST /submissions/<content_id>/appeal`
 
 Lets a creator contest a classification. Does **not** re-run `CLF` — this only captures reasoning and flips status.
 
@@ -235,13 +236,13 @@ Request:
 { "reasoning": "why the creator believes the label is wrong" }
 ```
 
-Effect: appends `{submission_id, reasoning, filed_at}` to `appeals.jsonl`, and updates the matching row in `submissions.db` to `status = "under_review"`.
+Effect: appends `{content_id, reasoning, filed_at}` to `appeals.jsonl`, and updates the matching row in `submissions.db` to `status = "under_review"`.
 
 Response `200`:
 
 ```json
 {
-  "submission_id": "uuid",
+  "content_id": "uuid",
   "status": "under_review",
   "appeal": { "reasoning": "...", "filed_at": "ISO-8601 timestamp" }
 }
