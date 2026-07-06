@@ -29,6 +29,5 @@ def classify(text: str) -> dict:
         "confidence": scored["confidence"],
         "label": scored["label"],
         "note": scored["note"],
-        "attribution": scored["label"],
         "signals": scored["signals"],
     }

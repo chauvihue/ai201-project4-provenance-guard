@@ -28,9 +28,9 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  A["POST /appeal"] --> |creator reason|B["Status update"]
+  A["POST /submissions/id/appeal"] --> |creator reason|B["Status → under_review"]
   B --> |creator reason|C["Audit log"]
-  C --> |appeal accepted?|D["Response"]
+  C --> |appeal made?|D["Response"]
 ```
 
 ### Narrative
@@ -78,7 +78,9 @@ The class names above (`highly-human`, `highly-AI`, `uncertain`) are internal id
 - **`uncertain` (> 25%, < 80%)**
   > "We're **not confident** whether this content is AI-generated or human-written. The analysis found a mix of signals — some consistent with AI generation, some consistent with human writing — so we can't make a clean call. Treat this classification as inconclusive."
 
-Each rendered label is followed by the numeric confidence score and a one-line "why" pulled from the signals' explanations, so a reader never sees a bare label with no supporting evidence.
+Each rendered label is followed by the numeric confidence score and, for `highly-human`/`uncertain`, a one-line "why" pulled from the more decisive signal's explanation, so a reader never sees a bare label with no supporting evidence. For `highly-AI` the "why" is interpolated directly into the `{driving_signal}` bracket in the sentence itself rather than appended separately.
+
+The "why" (and the `highly-AI` bracket fill) comes from whichever signal's score is farther from 0.5 — the more decisive one. If the LLM signal scored 0.95 and the stylometric signal scored 0.55, the LLM's reasoning is used; ties/near-ties default to the LLM signal. The chosen explanation is trimmed to its first sentence (capped at 140 characters) so the rendered message stays a legible one-liner instead of a full reasoning paragraph.
 
 ---
 
@@ -183,6 +185,8 @@ The system is expected to handle these cases poorly, and both are surface-level 
 
 `app.py` exposes four routes. `APP` is the only layer that talks to `CLF` and to storage — a client never touches `submissions.db` or `appeals.jsonl` directly.
 
+`CLF` is not one file: `classifier.py` is a thin orchestrator whose `classify(text)` calls `classify_llm` (in `llm_classifier_signal.py`, which also owns `score_submission` — the combining formula and threshold/NOTE logic) and `classify_stylometric` (in `stylometric_classifier_signal.py`, which owns the six feature sub-scorers). `labels.py` renders the display-facing message (`render_label` plus `pick_driving_signal`, which picks whichever signal's score is farther from 0.5 to source the "why"). `audit_log.py` is the only module that touches `submissions.db` / `appeals.jsonl`.
+
 ---
 
 #### `POST /submit`
@@ -208,21 +212,23 @@ Response `201`:
   "label": "highly-human | highly-AI | uncertain",
   "confidence": 0.0,
   "note": "string, present only for boundary cases (70-85% / 20-30%), otherwise null",
-  "attribution": {
-    "llm": { "score": 0.0, "reasoning": "short explanation from the LLM's reasoning step" },
-    "stylometric": { "score": 0.0, "explanation": "which features drove the score" }
-  },
-  "status": "final | under_review"
+  "message": "the full rendered label text from render_label() -- sentence + confidence % + why + note",
+  "llm_score": 0.0,
+  "llm_reasoning": "short explanation from the LLM's reasoning step",
+  "stylometric_score": 0.0,
+  "stylometric_explanation": "which features drove the score",
+  "status": "final | under_review",
+  "appeal": "null on a fresh submission -- this route always includes the field, it just has nothing to show yet"
 }
 ```
 
-Errors: `400` if `text` is missing/empty or exceeds a max length; `429` if the rate limit is exceeded.
+Errors: `400` if `text` is missing/empty (or all whitespace) or exceeds the max length of 20,000 characters; `429` if the rate limit is exceeded.
 
 #### `GET /submissions/<content_id>`
 
 Fetches one stored record from `submissions.db`, including its current `status` and any appeal already filed. Used by the UI to re-render a result page, and by a creator before deciding whether to appeal.
 
-Response `200`: same shape as the `POST /submit` response, plus an `appeal` field (`null` if none has been filed).
+Response `200`: same shape as the `POST /submit` response (the `appeal` field is populated once one has been filed, `null` otherwise).
 
 Errors: `404` if the id doesn't exist.
 
@@ -275,7 +281,7 @@ Response `200`:
 
 **Spec sections to hand over:** "Classification Signals" (the LLM-based signal subsection specifically), "Architecture" (both diagrams + narrative), and the `POST /submit` API contract.
 
-**What to ask for:** a Flask app skeleton (`app.py`) wiring up the `/submit` route with request validation per the documented `400`/`429` errors, plus a standalone `classify_llm(text: str) -> dict` function in `classifier.py` that calls the Groq API with the prompt structure described (class definitions, few-shot examples, reasoning-before-score, low temperature) and returns `{"score": float, "reasoning": str}`.
+**What to ask for:** a Flask app skeleton (`app.py`) wiring up the `/submit` route with request validation per the documented `400`/`429` errors, plus a standalone `classify_llm(text: str) -> dict` function in `llm_classifier_signal.py` that calls the Groq API with the prompt structure described (class definitions, few-shot examples, reasoning-before-score, low temperature) and returns `{"score": float, "reasoning": str}`.
 
 **How to verify:** call `classify_llm()` directly from a REPL/small script on 3-4 hand-picked inputs before wiring it into the endpoint — one obviously AI-generated paragraph, one obviously human (e.g. a casual message with typos), and one edited/mixed sample. Confirm scores land in the expected direction and `reasoning` is legible, *before* trusting it inside the route. Only once that's solid, hit `/submit` with `curl`/Postman and check the response shape matches the documented contract exactly (status codes included).
 
@@ -285,7 +291,7 @@ Response `200`:
 
 **Spec sections to hand over:** "Classification Signals" (the stylometric heuristics subsection), "Uncertainty Representation" (the score formula + "Handling grey-areas" asymmetric-threshold section), and the "Architecture" diagram.
 
-**What to ask for:** a `classify_stylometric(text: str) -> dict` function implementing the six named features (burstiness, lexical diversity, punctuation regularity, structural symmetry, error signature, specificity) as sub-scores combined into one `{"score": float, "explanation": str}`, plus a `score_submission(llm_result, stylometric_result) -> dict` function implementing the `0.5*l + 0.5*s` formula, the `highly-human`/`uncertain`/`highly-AI` threshold mapping, and the 70-85%/20-30% boundary NOTE logic.
+**What to ask for:** a `classify_stylometric(text: str) -> dict` function in `stylometric_classifier_signal.py` implementing the six named features (burstiness, lexical diversity, punctuation regularity, structural symmetry, error signature, specificity) as sub-scores combined into one `{"score": float, "explanation": str}`, plus a `score_submission(llm_result, stylometric_result) -> dict` function (added to `llm_classifier_signal.py`, alongside the LLM signal it was originally paired with) implementing the `0.5*l + 0.5*s` formula, the `highly-human`/`uncertain`/`highly-AI` threshold mapping, and the 70-85%/20-30% boundary NOTE logic. A `classifier.py` module ties both signals together behind one `classify(text: str) -> dict` entry point that `app.py` calls.
 
 **How to verify:** run `classify_stylometric()` and `score_submission()` on the same test inputs from M3 plus a few new ones (a repetitive poem, an ESL-style paragraph) *before* wiring into `/submit`. Confirm: (1) scores vary meaningfully between the clearly-AI and clearly-human samples rather than clustering near 0.5; (2) a boundary-adjacent input (deliberately constructed to land near 70-85% or 20-30%) actually triggers the NOTE text; (3) the two signals sometimes disagree on the edge cases, which is expected and confirms they're capturing different things rather than duplicating one signal.
 
@@ -295,7 +301,7 @@ Response `200`:
 
 **Spec sections to hand over:** "Displayed label text" (all three exact strings), "Appeals workflow", "Architecture" (appeal flow diagram + narrative), and the `POST /submissions/<id>/appeal` + `GET /log` API contracts.
 
-**What to ask for:** a `render_label(label, confidence, note) -> str` function that fills in the three label templates verbatim (not paraphrased) with the driving-signal explanation interpolated in; the `GET /submissions/<id>` and `POST /submissions/<id>/appeal` routes per the documented request/response/error shapes; and the `GET /log` route with its `status`/`label`/`limit` query filters reading from `submissions.db` joined with `appeals.jsonl`.
+**What to ask for:** a `render_label(label, confidence, note, driving_signal="") -> str` function in `labels.py` that fills in the three label templates verbatim (not paraphrased) with the driving-signal explanation interpolated in, plus a `pick_driving_signal(signals) -> str` helper (also in `labels.py`) that picks whichever signal's score is farther from 0.5 to source that explanation; an `audit_log.py` module owning all reads/writes to `submissions.db` (SQLite) and `appeals.jsonl`; the `GET /submissions/<id>` and `POST /submissions/<id>/appeal` routes per the documented request/response/error shapes; and the `GET /log` route with its `status`/`label`/`limit` query filters reading from `submissions.db` joined with `appeals.jsonl`.
 
 **How to verify:** construct three synthetic submissions whose scores are hand-set (mock the signal functions or insert rows directly) to land in each of the three bands, and confirm `GET /submissions/<id>` renders the correct exact label text for all three — this is the one place a subtle bug (wrong threshold comparison, off-by-one on `>=` vs `>`) would silently ship the wrong label. Then file an appeal against one of them and confirm: `status` flips to `under_review`, the appeal is queryable via `GET /log?status=under_review`, a second appeal attempt on the same id returns `409`, and the original score/label are untouched.
 
