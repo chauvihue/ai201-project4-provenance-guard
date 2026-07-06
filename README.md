@@ -29,7 +29,7 @@ python -m pytest tests/ -q
 ### Submission flow
 
 ```mermaid
-flowchart LR
+flowchart TB
     A["POST /submit"] --> |raw text| B["Signal 1: LLM"]
     B --> |raw text| C["Signal 2: Stylometric"]
     C --> |signal scores| D["Confidence scoring"]
@@ -41,7 +41,7 @@ flowchart LR
 ### Appeal flow
 
 ```mermaid
-flowchart LR
+flowchart TB
   A["POST /submissions/id/appeal"] --> |creator reason|B["Status → under_review"]
   B --> |creator reason|C["Audit log"]
   C --> |appeal made?|D["Response"]
