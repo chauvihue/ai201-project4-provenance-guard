@@ -396,42 +396,6 @@ This project was built incrementally across three milestones using Cursor Agent.
 
 ---
 
-## Portfolio walkthrough
-
-Record a 2–3 minute screen recording following this script. Keep it unpolished — the goal is to show the system working and explain a few decisions out loud.
-
-### Setup (before recording)
-
-```bash
-pip install -r requirements.txt
-# .env with GROQ_API_KEY, or use seeded data only (no API key needed for steps 3–5)
-python scripts/seed_db.py
-python app.py
-```
-
-### Script (~2 minutes)
-
-| Time | Show | Say |
-|---|---|---|
-| 0:00 | Terminal with `python app.py` running | "This is Provenance Guard — a Flask service that classifies creative writing as human, AI, or uncertain, and logs every decision." |
-| 0:15 | `curl http://127.0.0.1:5000/log` (or browser/Postman) | "The audit log stores every submission with both signal scores. Here are two seeded examples — a casual human rant at 16% and a polished essay at 87%." |
-| 0:35 | Point at `llm_score`, `stylometric_score`, `message` fields | "Two signals feed the score: an LLM classifier and stylometric heuristics, combined 50/50. The message is the exact transparency label the reader sees, with a confidence percentage and a one-line why." |
-| 0:55 | `curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" -d "{\"text\": \"honestly idk my dog ate my homework lol\", \"creator_id\": \"demo\"}"` | "Submit runs both signals synchronously, writes to the audit log, and returns the label. This casual text should land highly-human." *(Skip if no API key; point at the seeded human row instead.)* |
-| 1:15 | `curl http://127.0.0.1:5000/log?status=under_review` | "When a creator disagrees, they appeal. This doesn't re-run the classifier — it records their reasoning and flips status to under_review. The original 87% AI score stays untouched." |
-| 1:30 | Open `classifier.py` or architecture diagram in README | "I used asymmetric thresholds — 80% to call something AI, only 25% to clear it as human — because a false accusation is worse than a miss. The wide uncertain band catches mixed-authorship cases." |
-| 1:50 | Open `stylometric_classifier_signal.py`, scroll to `FEATURE_SUBSCORERS` | "The stylometric signal is six cheap features — burstiness, lexical diversity, error signature, and so on. It's complementary to the LLM because each signal has different blind spots." |
-| 2:05 | Wrap up | "Known limitation: ESL writing gets over-flagged because formal connectors and clean grammar look AI-like to the stylometric features. Appeals and the audit log are how a human reviewer would catch that." |
-
-### Recording tips
-
-- Windows: Xbox Game Bar (`Win + G`) or OBS.
-- Mac: QuickTime → New Screen Recording.
-- Show terminal output large enough to read; you don't need to show every line of code.
-
-**Submit your recording** as a link (YouTube unlisted, Loom, Google Drive, etc.) in your portfolio submission alongside this repo.
-
----
-
 ## Project structure
 
 ```
